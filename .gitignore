@@ -98,6 +98,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+qudi_scanner/
 
 # Spyder project settings
 .spyderproject
