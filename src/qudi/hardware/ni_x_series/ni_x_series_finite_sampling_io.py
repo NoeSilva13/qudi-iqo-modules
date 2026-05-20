@@ -474,13 +474,20 @@ class NIXSeriesFiniteSamplingIO(FiniteSamplingIOInterface):
         if not self.is_running:
             return self._number_of_pending_samples
 
-        if self._ai_task_handle is None and self._di_task_handles is not None:
+        # `_di_task_handles` is initialised as an empty list, not None, so the original
+        # `is not None` checks would index `[0]` on an empty list when running in output-only
+        # mode (no AI / no PFI counters). Use boolean truthiness instead.
+        has_ai = self._ai_task_handle is not None
+        has_di = bool(self._di_task_handles)
+
+        if not has_ai and not has_di:
+            return 0  # output-only mode: no input buffer to drain
+        if has_di and not has_ai:
             return self._di_task_handles[0].in_stream.avail_samp_per_chan
-        elif self._ai_task_handle is not None and self._di_task_handles is None:
+        if has_ai and not has_di:
             return self._ai_task_handle.in_stream.avail_samp_per_chan
-        else:
-            return min(self._ai_task_handle.in_stream.avail_samp_per_chan,
-                       self._di_task_handles[0].in_stream.avail_samp_per_chan)
+        return min(self._ai_task_handle.in_stream.avail_samp_per_chan,
+                   self._di_task_handles[0].in_stream.avail_samp_per_chan)
 
     @property
     def frame_size(self):
