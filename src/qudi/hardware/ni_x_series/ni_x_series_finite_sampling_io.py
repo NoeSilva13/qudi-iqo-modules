@@ -403,7 +403,13 @@ class NIXSeriesFiniteSamplingIO(FiniteSamplingIOInterface):
             f'Trying to set invalid output channels "' \
             f'{set(output_channels).difference(set(self._constraints.output_channel_names))}" not defined in config '
 
-        di_channels, ai_channels = self._extract_ai_di_from_input_channels(input_channels)
+        # Allow output-only operation (no input channels). This is required when an external
+        # device (e.g. a Swabian TimeTagger) is used for counting while the NI card only drives
+        # the analog outputs and exports its sample clock via `sample_clock_output`.
+        if input_channels:
+            di_channels, ai_channels = self._extract_ai_di_from_input_channels(input_channels)
+        else:
+            di_channels, ai_channels = (), ()
         ao_channels = [ch for ch in output_channels if "ao" in ch]
         do_channels = [ch for ch in output_channels if "line" in ch]
 
