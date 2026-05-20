@@ -485,6 +485,11 @@ class NiTimeTaggerScanningProbeInterfuseBare(ScanningProbeInterface):
         return self.raw_data_container.is_full
 
     def _fetch_data_chunk(self):
+        # Bail out cleanly if the scan was stopped between the previous chunk and this callback.
+        # Without this guard, an already-queued `sigNextDataChunk` would race against `stop_scan`
+        # and try to read from a TimeTagger that has already been disarmed.
+        if not self.is_scan_running:
+            return
         try:
             chunk_size = 10
             tt = self._timetagger()

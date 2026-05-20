@@ -259,8 +259,10 @@ class TimeTaggerFiniteCounter(FiniteSamplingInputInterface):
     def get_buffered_samples(self, number_of_samples=None):
         with self._thread_lock:
             if self.module_state() != 'locked' and self.samples_in_buffer < 1:
-                self.log.error(
-                    'Unable to read data. Acquisition is not running and buffer is empty.'
+                # Legitimate post-stop race: caller asked for data right after
+                # `stop_buffered_acquisition()` cleared the measurement. No data left to return.
+                self.log.debug(
+                    'get_buffered_samples called while idle and buffer empty - returning {}.'
                 )
                 return dict()
 
