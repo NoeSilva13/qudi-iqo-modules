@@ -225,16 +225,18 @@ class TimeTaggerFiniteCounter(FiniteSamplingInputInterface):
             self.module_state.lock()
             self._samples_consumed = 0
             try:
-                # Use the rising edge of the clock channel to open each bin and the falling edge
-                # of the same channel to close it. Each NI sample-clock pulse therefore produces
-                # exactly one self-contained bin whose duration equals the clock HIGH-time.
-                # Negative channel numbers select falling-edge triggers in the TimeTagger API.
+                # Each bin is opened by a rising edge of the clock channel and closed by the
+                # next rising edge of the same channel. The bin therefore spans a full clock
+                # period, so the integration window equals the dwell time regardless of the
+                # clock duty cycle (50/50 for an NI counter-output clock, active-low narrow
+                # pulse for an NI internal AO/AI sample clock, etc.). The NI module emits
+                # `frame_size + 1` clock pulses, which produces exactly `frame_size` bins.
                 clock_ch = int(self._channel_clock)
                 self._cbm = tt.CountBetweenMarkers(
                     tagger=self._tagger,
                     click_channel=int(self._channel_apd),
                     begin_channel=clock_ch,
-                    end_channel=-clock_ch,
+                    end_channel=tt.CHANNEL_UNUSED,
                     n_values=int(self._frame_size),
                 )
             except Exception:
