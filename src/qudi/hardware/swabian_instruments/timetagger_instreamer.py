@@ -30,6 +30,7 @@ import TimeTagger as tt
 from typing import List, Optional, Sequence, Tuple, Union
 
 from qudi.core.configoption import ConfigOption
+from qudi.core.connector import Connector
 from qudi.util.mutex import RecursiveMutex
 from qudi.util.constraints import ScalarConstraint
 from qudi.interface.data_instream_interface import (
@@ -60,7 +61,15 @@ class TimeTaggerInstreamer(DataInStreamInterface):
             channel_buffer_size: 1048576     # samples per channel (optional)
             # timetagger_serial: ''          # optional, connect to a specific device
             # reset: False                   # optional, reset the TimeTagger on activation
+        connect:
+            timetagger: tt_device            # optional: share a TimeTaggerDevice instance
     """
+
+    # Optional shared TimeTagger device. When connected, the physical tagger is owned by the
+    # TimeTaggerDevice module and shared with other measurement modules, enabling simultaneous
+    # operation (e.g. live time series + confocal scan). When omitted, this module opens its own
+    # standalone connection.
+    _tt_device = Connector(name='timetagger', interface='TimeTaggerDevice', optional=True)
 
     _channels = ConfigOption(name='channels', missing='error')
     _sample_rate_limits = ConfigOption(name='sample_rate_limits', default=(0.1, 1e7))
@@ -74,6 +83,7 @@ class TimeTaggerInstreamer(DataInStreamInterface):
         super().__init__(*args, **kwargs)
 
         self._tagger = None
+        self._owns_tagger = True
         self._counter = None
         self._constraints = None
 
@@ -92,12 +102,19 @@ class TimeTaggerInstreamer(DataInStreamInterface):
         self._thread_lock = RecursiveMutex()
 
     def on_activate(self):
-        if self._timetagger_serial:
-            self._tagger = tt.createTimeTagger(self._timetagger_serial)
+        if self._tt_device() is not None:
+            # Use the shared device; it owns the connection and handles reset once on its own
+            # activation. Do not reset here, that would clear other modules' measurements.
+            self._tagger = self._tt_device().get_tagger()
+            self._owns_tagger = False
         else:
-            self._tagger = tt.createTimeTagger()
-        if self._reset:
-            self._tagger.reset()
+            if self._timetagger_serial:
+                self._tagger = tt.createTimeTagger(self._timetagger_serial)
+            else:
+                self._tagger = tt.createTimeTagger()
+            if self._reset:
+                self._tagger.reset()
+            self._owns_tagger = True
 
         # Normalise the channel mapping to {str: int} preserving config order
         self._channel_numbers = {str(name): int(ch) for name, ch in dict(self._channels).items()}
@@ -133,12 +150,14 @@ class TimeTaggerInstreamer(DataInStreamInterface):
 
     def on_deactivate(self):
         self._stop_counter()
-        free_fn = getattr(tt, 'freeTimeTagger', None)
-        if free_fn is not None and self._tagger is not None:
-            try:
-                free_fn(self._tagger)
-            except Exception:
-                self.log.exception('Failed to free TimeTagger instance.')
+        # Only free the tagger if we own it. A shared instance is owned by TimeTaggerDevice.
+        if self._owns_tagger:
+            free_fn = getattr(tt, 'freeTimeTagger', None)
+            if free_fn is not None and self._tagger is not None:
+                try:
+                    free_fn(self._tagger)
+                except Exception:
+                    self.log.exception('Failed to free TimeTagger instance.')
         self._tagger = None
 
     @property

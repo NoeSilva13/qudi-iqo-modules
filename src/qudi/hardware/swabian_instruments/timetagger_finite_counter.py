@@ -30,6 +30,7 @@ import numpy as np
 import TimeTagger as tt
 
 from qudi.core.configoption import ConfigOption
+from qudi.core.connector import Connector
 from qudi.util.mutex import RecursiveMutex
 from qudi.interface.finite_sampling_input_interface import (
     FiniteSamplingInputInterface,
@@ -62,7 +63,15 @@ class TimeTaggerFiniteCounter(FiniteSamplingInputInterface):
             # trigger_level: 0.5             # optional, trigger level on the clock channel (V)
             sample_rate_limits: [1, 1e6]
             frame_size_limits: [1, 1e8]
+        connect:
+            timetagger: tt_device            # optional: share a TimeTaggerDevice instance
     """
+
+    # Optional shared TimeTagger device. When connected, the physical tagger is owned by the
+    # TimeTaggerDevice module and shared with other measurement modules, enabling simultaneous
+    # operation (e.g. confocal scan + live time series). When omitted, this module opens its own
+    # standalone connection (legacy behaviour).
+    _tt_device = Connector(name='timetagger', interface='TimeTaggerDevice', optional=True)
 
     _channel_apd = ConfigOption(name='timetagger_channel_apd', missing='error')
     _channel_clock = ConfigOption(name='timetagger_channel_clock', missing='error')
@@ -77,6 +86,7 @@ class TimeTaggerFiniteCounter(FiniteSamplingInputInterface):
         super().__init__(*args, **kwargs)
 
         self._tagger = None
+        self._owns_tagger = True
         self._cbm = None
 
         self._constraints = None
@@ -88,8 +98,14 @@ class TimeTaggerFiniteCounter(FiniteSamplingInputInterface):
         self._thread_lock = RecursiveMutex()
 
     def on_activate(self):
-        self._tagger = tt.createTimeTagger()
-        self._tagger.reset()
+        if self._tt_device() is not None:
+            # Use the shared device; it owns the connection and has already reset the hardware.
+            self._tagger = self._tt_device().get_tagger()
+            self._owns_tagger = False
+        else:
+            self._tagger = tt.createTimeTagger()
+            self._tagger.reset()
+            self._owns_tagger = True
 
         if self._trigger_level is not None:
             try:
@@ -123,12 +139,14 @@ class TimeTaggerFiniteCounter(FiniteSamplingInputInterface):
 
     def on_deactivate(self):
         self._stop_cbm()
-        free_fn = getattr(tt, 'freeTimeTagger', None)
-        if free_fn is not None:
-            try:
-                free_fn(self._tagger)
-            except Exception:
-                self.log.exception('Failed to free TimeTagger instance.')
+        # Only free the tagger if we own it. A shared instance is owned by TimeTaggerDevice.
+        if self._owns_tagger:
+            free_fn = getattr(tt, 'freeTimeTagger', None)
+            if free_fn is not None and self._tagger is not None:
+                try:
+                    free_fn(self._tagger)
+                except Exception:
+                    self.log.exception('Failed to free TimeTagger instance.')
         self._tagger = None
 
     @property
