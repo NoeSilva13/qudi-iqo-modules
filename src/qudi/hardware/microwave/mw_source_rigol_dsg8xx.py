@@ -118,7 +118,7 @@ class MicrowaveRigolDsg8xx(MicrowaveInterface):
 
         slope = 'POS' if self._rising_edge_trigger else 'NEG'
         self._device.write(f':INP:TRIG:SLOP {slope}')
-        self._device.write(':SWE:SWE:TRIG:TYPE EXT')
+        self._device.write(':SWE:SWE:TRIG:TYPE AUTO')
         self._device.write(':SWE:POIN:TRIG:TYPE EXT')
         self._device.write(':SWE:TYPE STEP')
         self._device.write(':SWE:STEP:SPAC LIN')
@@ -238,8 +238,9 @@ class MicrowaveRigolDsg8xx(MicrowaveInterface):
             self._device.write(f':SWE:STEP:STAR:FREQ {start_freq:.9f}Hz')
             self._device.write(f':SWE:STEP:STOP:FREQ {stop_freq:.9f}Hz')
             self._device.write(f':SWE:STEP:POIN {int(num_points):d}')
+            self._device.write(':SWE:STEP:DWEL 20ms')
             self._device.write(':SWE:MODE CONT')
-            self._device.write(':SWE:SWE:TRIG:TYPE EXT')
+            self._device.write(':SWE:SWE:TRIG:TYPE AUTO')
             self._device.write(':SWE:POIN:TRIG:TYPE EXT')
             slope = 'POS' if self._rising_edge_trigger else 'NEG'
             self._device.write(f':INP:TRIG:SLOP {slope}')
