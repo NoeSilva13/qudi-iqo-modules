@@ -29,8 +29,6 @@ try:
     import pyvisa as visa
 except ImportError:
     import visa
-import time
-import numpy as np
 
 from qudi.util.mutex import Mutex
 from qudi.core.configoption import ConfigOption
@@ -89,6 +87,10 @@ class MicrowaveRigolDsg8xx(MicrowaveInterface):
         self._device = self._rm.open_resource(
             self._visa_address, timeout=int(self._comm_timeout * 1000)
         )
+        # DSG800 firmware silently ignores :SWE:STAT <arg> when the SCPI line is
+        # terminated with the PyVISA default "\r\n". Use LF-only termination.
+        self._device.write_termination = '\n'
+        self._device.read_termination = '\n'
         idn = self._device.query('*IDN?').strip()
         try:
             self._model = idn.split(',')[1].strip()
@@ -106,7 +108,7 @@ class MicrowaveRigolDsg8xx(MicrowaveInterface):
 
         # Make sure we start from a known, safe state: RF off, sweep off.
         self._device.write(':OUTP OFF')
-        self._device.write(':SWE:STATe OFF')
+        self._device.write(':SWE:STAT OFF')
 
         self._is_scanning = False
         self._scan_power = self._constraints.power.default
@@ -114,8 +116,9 @@ class MicrowaveRigolDsg8xx(MicrowaveInterface):
         self._scan_mode = SamplingOutputMode.EQUIDISTANT_SWEEP
         self._scan_sample_rate = self._constraints.max_sample_rate
 
-        slope = 'POSitive' if self._rising_edge_trigger else 'NEGative'
+        slope = 'POS' if self._rising_edge_trigger else 'NEG'
         self._device.write(f':INP:TRIG:SLOP {slope}')
+        self._device.write(':SWE:SWE:TRIG:TYPE EXT')
         self._device.write(':SWE:POIN:TRIG:TYPE EXT')
         self._device.write(':SWE:TYPE STEP')
         self._device.write(':SWE:STEP:SPAC LIN')
@@ -129,7 +132,7 @@ class MicrowaveRigolDsg8xx(MicrowaveInterface):
         if self._device is not None:
             try:
                 self._device.write(':OUTP OFF')
-                self._device.write(':SWE:STATe OFF')
+                self._device.write(':SWE:STAT OFF')
             finally:
                 self._device.close()
         if self._rm is not None:
@@ -149,12 +152,12 @@ class MicrowaveRigolDsg8xx(MicrowaveInterface):
     @property
     def cw_power(self):
         with self._thread_lock:
-            return float(self._device.query(':LEVel?'))
+            return float(self._device.query(':LEV?'))
 
     @property
     def cw_frequency(self):
         with self._thread_lock:
-            return float(self._device.query(':FREQuency?'))
+            return float(self._device.query(':FREQ?'))
 
     @property
     def scan_power(self):
@@ -181,7 +184,7 @@ class MicrowaveRigolDsg8xx(MicrowaveInterface):
         with self._thread_lock:
             if self.module_state() != 'idle':
                 self._device.write(':OUTP OFF')
-                self._device.write(':SWE:STATe OFF')
+                self._device.write(':SWE:STAT OFF')
                 self._is_scanning = False
                 self.module_state.unlock()
 
@@ -191,9 +194,9 @@ class MicrowaveRigolDsg8xx(MicrowaveInterface):
             if self.module_state() != 'idle':
                 raise RuntimeError('Unable to set CW parameters. Microwave output active.')
             self._assert_cw_parameters_args(frequency, power)
-            self._device.write(':SWE:STATe OFF')
-            self._device.write(f':FREQuency {frequency:.9f}Hz')
-            self._device.write(f':LEVel {power:.3f}dBm')
+            self._device.write(':SWE:STAT OFF')
+            self._device.write(f':FREQ {frequency:.9f}Hz')
+            self._device.write(f':LEV {power:.3f}dBm')
 
     def cw_on(self):
         """ Switches on preconfigured cw microwave output. """
@@ -204,7 +207,7 @@ class MicrowaveRigolDsg8xx(MicrowaveInterface):
                 raise RuntimeError(
                     'Unable to start CW microwave output. Frequency scanning in progress.'
                 )
-            self._device.write(':SWE:STATe OFF')
+            self._device.write(':SWE:STAT OFF')
             self._device.write(':OUTP ON')
             self._is_scanning = False
             self.module_state.lock()
@@ -228,20 +231,20 @@ class MicrowaveRigolDsg8xx(MicrowaveInterface):
             self._scan_sample_rate = float(sample_rate)
             self._scan_frequencies = (float(start_freq), float(stop_freq), int(num_points))
 
-            self._device.write(f':LEVel {power:.3f}dBm')
+            self._device.write(f':LEV {power:.3f}dBm')
             self._device.write(':SWE:TYPE STEP')
             self._device.write(':SWE:STEP:SPAC LIN')
             self._device.write(':SWE:DIR FWD')
-            self._device.write(f':SWE:STEP:STARt:FREQuency {start_freq:.9f}Hz')
-            self._device.write(f':SWE:STEP:STOP:FREQuency {stop_freq:.9f}Hz')
-            self._device.write(f':SWE:STEP:POINts {int(num_points):d}')
+            self._device.write(f':SWE:STEP:STAR:FREQ {start_freq:.9f}Hz')
+            self._device.write(f':SWE:STEP:STOP:FREQ {stop_freq:.9f}Hz')
+            self._device.write(f':SWE:STEP:POIN {int(num_points):d}')
             self._device.write(':SWE:MODE CONT')
+            self._device.write(':SWE:SWE:TRIG:TYPE EXT')
             self._device.write(':SWE:POIN:TRIG:TYPE EXT')
-            slope = 'POSitive' if self._rising_edge_trigger else 'NEGative'
+            slope = 'POS' if self._rising_edge_trigger else 'NEG'
             self._device.write(f':INP:TRIG:SLOP {slope}')
             # Engage the frequency sweep. RF output itself is switched on in start_scan().
-            self._device.write(':SWE:STATe FREQuency')
-            time.sleep(0.05)
+            self._device.write(':SWE:STAT FREQ')
 
     def start_scan(self):
         """ Switches on the preconfigured microwave scanning. """
@@ -253,8 +256,8 @@ class MicrowaveRigolDsg8xx(MicrowaveInterface):
             assert self._scan_frequencies is not None, \
                 'No scan_frequencies set. Unable to start scan.'
 
-            self._device.write(':SWE:STATe FREQuency')
-            self._device.write(':SWE:RESet:ALL')
+            self._device.write(':SWE:STAT FREQ')
+            self._device.write(':SWE:RES:ALL')
             self._device.write(':OUTP ON')
             self._is_scanning = True
             self.module_state.lock()
@@ -264,4 +267,4 @@ class MicrowaveRigolDsg8xx(MicrowaveInterface):
         with self._thread_lock:
             if not self._is_scanning:
                 return
-            self._device.write(':SWE:RESet:ALL')
+            self._device.write(':SWE:RES:ALL')
